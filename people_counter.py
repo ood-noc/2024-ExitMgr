@@ -9,11 +9,11 @@ class PeopleCounter:
         self.entry_count = 0
         self.exit_count = 0
         self.current_inside = 0
-        # トラッカーの初期化
-        self.trackers = cv2.MultiTracker_create()
+        # トラッカーの初期化（legacy モジュールを使用）
+        self.trackers = cv2.legacy.MultiTracker_create()
         # エリアラインの設定
-        self.line_position = 250  # フレームの高さに合わせて調整
-        self.direction_threshold = 5  # 移動方向のしきい値
+        self.line_position = 250
+        self.direction_threshold = 5
         # デバッグモードフラグ
         self.debug_mode = debug_mode
 
@@ -42,7 +42,8 @@ class PeopleCounter:
         # トラッカーの更新
         success, boxes = self.trackers.update(frame)
 
-        new_trackers = cv2.MultiTracker_create()
+        # 新しいトラッカーの初期化（legacy モジュールを使用）
+        new_trackers = cv2.legacy.MultiTracker_create()
         for i, box in enumerate(boxes):
             x, y, w, h = [int(v) for v in box]
             center_y = y + h // 2
@@ -55,14 +56,18 @@ class PeopleCounter:
                 self.entry_count += 1
                 self.current_inside += 1
             else:
-                new_trackers.add(cv2.TrackerKCF_create(), frame, box)
+                # トラッカーの追加（legacy モジュールを使用）
+                new_trackers.add(cv2.legacy.TrackerKCF_create(), frame, box)
                 if self.debug_mode:
                     cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
 
         # 新しい検出をトラッカーに追加
         for detection in detections:
-            new_trackers.add(cv2.TrackerKCF_create(), frame, detection)
+            # トラッカーの作成（legacy モジュールを使用）
+            tracker = cv2.legacy.TrackerKCF_create()
+            self.trackers.add(tracker, frame, detection)
 
+        # トラッカーを更新
         self.trackers = new_trackers
 
         if self.debug_mode:
