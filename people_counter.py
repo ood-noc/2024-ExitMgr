@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+from scipy.optimize import linear_sum_assignment
 
 class PeopleCounter:
     def __init__(self, debug_mode=False):
@@ -9,21 +10,22 @@ class PeopleCounter:
         self.current_inside = 0
         # トラッカーの初期化（辞書に変更）
         self.trackers = {}
-        # エリアラインの設定
-        self.line_position = 250  # 調整が必要
-        self.direction_threshold = 5
+        # エリアラインの設定（縦線）
+        self.line_position = 320  # フレーム幅に合わせて調整
         # デバッグモードフラグ
         self.debug_mode = debug_mode
         # オブジェクトID管理
         self.object_id = 0
         self.objects = {}
-        # YOLOの初期化
+        # トラッカーの生存期間管理
+        self.tracker_lifetimes = {}
+        # YOLOの初期化（Tiny-YOLOv4を使用）
         self.net, self.output_layers, self.classes = self.initialize_yolo()
 
     def initialize_yolo(self):
-        # モデルとクラス名のパス
-        model_cfg = 'yolo/yolov4.cfg'
-        model_weights = 'yolo/yolov4.weights'
+        # モデルとクラス名のパス（Tinyモデルを使用）
+        model_cfg = 'yolo/yolov4-tiny.cfg'
+        model_weights = 'yolo/yolov4-tiny.weights'
         classes_file = 'yolo/coco.names'
 
         # クラス名の読み込み
@@ -59,11 +61,13 @@ class PeopleCounter:
         # 推論結果の解析
         for out in outs:
             for detection in out:
+                if len(detection) < 7:
+                    continue  # 異常なデータをスキップ
                 scores = detection[5:]
                 class_id = np.argmax(scores)
                 confidence = scores[class_id]
                 # クラスIDが「person」であり、信頼度がしきい値を超える場合
-                if self.classes[class_id] == 'person' and confidence > 0.5:
+                if self.classes[class_id] == 'person' and confidence > 0.3:
                     center_x = int(detection[0] * width)
                     center_y = int(detection[1] * height)
                     w = int(detection[2] * width)
@@ -77,7 +81,7 @@ class PeopleCounter:
                     class_ids.append(class_id)
 
         # 重複するボックスの除去
-        indexes = cv2.dnn.NMSBoxes(boxes, confidences, 0.5, 0.4)
+        indexes = cv2.dnn.NMSBoxes(boxes, confidences, 0.3, 0.4)
 
         detections = []
 
@@ -87,7 +91,7 @@ class PeopleCounter:
                 detections.append((x, y, w, h))
 
                 if self.debug_mode:
-                    # バウンディングボックスの描画
+                    # バウンディングボックスの描画（緑色）
                     label = f"{self.classes[class_ids[i]]}: {confidences[i]:.2f}"
                     cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
                     cv2.putText(frame, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
@@ -97,6 +101,42 @@ class PeopleCounter:
 
         return detections, frame
 
+    def compute_iou(self, box1, box2):
+        """
+        Compute Intersection over Union (IOU) between two bounding boxes.
+        Each box is a tuple (x, y, w, h)
+        """
+        x1, y1, w1, h1 = box1
+        x2, y2, w2, h2 = box2
+
+        # Calculate coordinates of intersection rectangle
+        xi1 = max(x1, x2)
+        yi1 = max(y1, y2)
+        xi2 = min(x1 + w1, x2 + w2)
+        yi2 = min(y1 + h1, y2 + h2)
+
+        inter_width = max(0, xi2 - xi1)
+        inter_height = max(0, yi2 - yi1)
+        inter_area = inter_width * inter_height
+
+        box1_area = w1 * h1
+        box2_area = w2 * h2
+
+        union_area = box1_area + box2_area - inter_area
+
+        if union_area == 0:
+            return 0.0
+
+        iou = inter_area / union_area
+        return iou
+
+    def calculate_distance(self, center1, center2):
+        """
+        Calculate Euclidean distance between two centers.
+        Each center is a tuple (x, y)
+        """
+        return np.linalg.norm(np.array(center1) - np.array(center2))
+
     def process_frame(self, frame):
         # YOLOで人物検出
         detections, frame = self.detect_people(frame)
@@ -104,76 +144,106 @@ class PeopleCounter:
         # トラッカーの更新
         updated_trackers = {}
         updated_objects = {}
+        tracker_boxes = {}
+        tracker_centers = {}
 
-        # 既存のトラッカーを更新し、現在の位置を取得
-        tracker_positions = {}
+        # 既存トラッカーの更新と情報取得
         for object_id, tracker in self.trackers.items():
             ok, box = tracker.update(frame)
             if ok:
                 x, y, w, h = [int(v) for v in box]
                 center = (x + w // 2, y + h // 2)
-                tracker_positions[object_id] = (center, (x, y, w, h))
-                # オブジェクトの中心位置を更新
-                updated_objects[object_id] = center[1]
+                tracker_boxes[object_id] = (x, y, w, h)
+                tracker_centers[object_id] = center
+                updated_objects[object_id] = center[0]  # X coordinate
+                self.tracker_lifetimes[object_id] = 0  # reset lifetime
             else:
-                # 追跡失敗したトラッカーは削除
-                if self.debug_mode:
-                    print(f"Tracker {object_id} failed and was removed.")
+                # Increment lifetime
+                self.tracker_lifetimes[object_id] = self.tracker_lifetimes.get(object_id, 0) + 1
+                if self.tracker_lifetimes[object_id] > 5:
+                    if self.debug_mode:
+                        print(f"Tracker {object_id} removed after exceeding misses.")
+                    continue  # do not add to updated_trackers
 
-        # 新しい検出と既存のトラッカーをマッチング
-        unmatched_detections = []
+        # マッチングの準備
+        unmatched_detections = detections.copy()
         matched_trackers = set()
-        detection_centers = []
+        matches = []
 
-        for detection in detections:
-            x, y, w, h = detection
-            center = (x + w // 2, y + h // 2)
-            detection_centers.append((center, detection))
+        # トラッカーIDのリスト
+        tracker_ids = list(tracker_boxes.keys())
 
-        distance_threshold = 50  # 距離のしきい値（調整が必要）
+        # IOUマトリックスの計算
+        iou_matrix = []
+        detection_boxes = []
+        for det in detections:
+            det_box = det
+            detection_boxes.append(det_box)
+            ious = []
+            for trk_id in tracker_ids:
+                trk_box = tracker_boxes[trk_id]
+                iou = self.compute_iou(det_box, trk_box)
+                ious.append(iou)
+            iou_matrix.append(ious)
 
-        for det_center, detection in detection_centers:
-            min_distance = float('inf')
-            matched_id = None
+        if len(iou_matrix) > 0 and len(tracker_ids) > 0:
+            iou_matrix = np.array(iou_matrix)
+            # Hungarianアルゴリズムのため、コスト行列として1 - IOUを使用
+            cost_matrix = 1 - iou_matrix
+            row_ind, col_ind = linear_sum_assignment(cost_matrix)
 
-            for object_id, (trk_center, trk_box) in tracker_positions.items():
-                distance = np.linalg.norm(np.array(det_center) - np.array(trk_center))
-                if distance < min_distance and distance < distance_threshold:
-                    min_distance = distance
-                    matched_id = object_id
+            for row, col in zip(row_ind, col_ind):
+                if iou_matrix[row][col] >= 0.3:
+                    det = detection_boxes[row]
+                    trk_id = tracker_ids[col]
+                    matches.append((det, trk_id))
+                    matched_trackers.add(trk_id)
+                    if det in unmatched_detections:
+                        unmatched_detections.remove(det)
 
-            if matched_id is not None:
-                # 既存のトラッカーとマッチング
-                tracker = self.trackers[matched_id]
-                tracker.init(frame, detection)
-                updated_trackers[matched_id] = tracker
-                updated_objects[matched_id] = det_center[1]
-                matched_trackers.add(matched_id)
-            else:
-                # マッチングしなかった検出は新規トラッカーを作成
+        # マッチングされたトラッカーの更新
+        for det, trk_id in matches:
+            x, y, w, h = det
+            center_x = x + w // 2
+            updated_objects[trk_id] = center_x
+            updated_trackers[trk_id] = self.trackers[trk_id]
+
+        # マッチングされなかった検出に対する新規トラッカーの作成
+        for det in unmatched_detections:
+            x, y, w, h = det
+            center_det = (x + w // 2, y + h // 2)
+            # 既存トラッカーとの距離をチェック
+            close = False
+            for trk_id, trk_center in tracker_centers.items():
+                distance = self.calculate_distance(center_det, trk_center)
+                if distance < 50:  # 距離の閾値を調整
+                    close = True
+                    break
+            if not close:
                 self.object_id += 1
-                tracker = cv2.legacy.TrackerKCF_create()
-                tracker.init(frame, detection)
+                tracker = cv2.legacy.TrackerCSRT_create()
+                tracker.init(frame, tuple(det))
                 updated_trackers[self.object_id] = tracker
-                updated_objects[self.object_id] = det_center[1]
+                updated_objects[self.object_id] = center_det[0]
+                self.tracker_lifetimes[self.object_id] = 0
 
-        # 追跡中で、マッチングされなかったトラッカーをそのまま更新リストに追加
+        # マッチングされなかった既存トラッカーの保持
         for object_id in self.trackers.keys():
-            if object_id not in matched_trackers and object_id in tracker_positions:
+            if object_id not in matched_trackers and object_id in tracker_boxes:
                 updated_trackers[object_id] = self.trackers[object_id]
-                updated_objects[object_id] = tracker_positions[object_id][0][1]
+                updated_objects[object_id] = tracker_centers[object_id][0]
 
         # カウントの更新
         for object_id in updated_trackers.keys():
             if object_id in self.objects:
-                prev_center_y = self.objects[object_id]
-                curr_center_y = updated_objects[object_id]
+                prev_center_x = self.objects[object_id]
+                curr_center_x = updated_objects[object_id]
 
-                # 入退室の判定
-                if prev_center_y < self.line_position and curr_center_y >= self.line_position:
+                # 入退室の判定（X軸方向）
+                if prev_center_x < self.line_position and curr_center_x >= self.line_position:
                     self.entry_count += 1
                     self.current_inside += 1
-                elif prev_center_y > self.line_position and curr_center_y <= self.line_position:
+                elif prev_center_x > self.line_position and curr_center_x <= self.line_position:
                     self.exit_count += 1
                     self.current_inside = max(0, self.current_inside - 1)
 
@@ -184,16 +254,21 @@ class PeopleCounter:
         if self.debug_mode:
             # デバッグ情報の表示
             for object_id, tracker in self.trackers.items():
-                # トラッカーの位置を取得
-                x, y, w, h = [int(v) for v in tracker_positions.get(object_id, ((0, 0), (0, 0, 0, 0)))[1]]
-                # バウンディングボックスとIDの表示
-                cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
-                cv2.putText(frame, f'ID: {object_id}', (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
-                # 中心点の描画
-                center = (x + w // 2, y + h // 2)
-                cv2.circle(frame, center, 5, (0, 255, 255), -1)
+                if object_id in tracker_boxes:
+                    x, y, w, h = tracker_boxes[object_id]
+                    # バウンディングボックスとIDの表示（青色）
+                    cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
+                    cv2.putText(frame, f'ID: {object_id}', (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+                    # 中心点の描画
+                    center = tracker_centers[object_id]
+                    cv2.circle(frame, center, 5, (0, 255, 255), -1)
 
-            # エリアラインの描画
-            cv2.line(frame, (0, self.line_position), (frame.shape[1], self.line_position), (0, 255, 255), 2)
+            # エリアラインの描画（垂直線）
+            cv2.line(frame, (self.line_position, 0), (self.line_position, frame.shape[0]), (0, 255, 255), 2)
+
+            # カウント情報の表示
+            cv2.putText(frame, f"Entry: {self.entry_count}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+            cv2.putText(frame, f"Exit: {self.exit_count}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+            cv2.putText(frame, f"Inside: {self.current_inside}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
 
         return frame

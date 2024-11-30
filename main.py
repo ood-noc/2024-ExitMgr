@@ -12,6 +12,13 @@ def main():
     # カメラの設定（デバイスIDを適宜変更）
     cap = cv2.VideoCapture(0)
 
+    # フレームサイズの設定（処理速度向上のため）
+    frame_width = 640
+    frame_height = 480
+
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, frame_width)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, frame_height)
+
     # PeopleCounterの初期化
     pc = PeopleCounter(debug_mode=args.debug)
 
@@ -23,8 +30,8 @@ def main():
         if not ret:
             break
 
-        # フレームのリサイズ（処理速度向上のため）
-        frame = cv2.resize(frame, (640, 480))
+        # フレームのリサイズ（必要に応じて調整）
+        frame = cv2.resize(frame, (frame_width, frame_height))
 
         # 人物検出とカウント
         frame = pc.process_frame(frame)
@@ -41,10 +48,6 @@ def main():
             start_time = time.time()  # タイマーをリセット
 
         if args.debug:
-            # カウント情報をフレームに表示
-            cv2.putText(frame, f"Entry: {entry_count}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-            cv2.putText(frame, f"Exit: {exit_count}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-            cv2.putText(frame, f"Inside: {current_inside}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
             cv2.imshow("Frame", frame)
 
             key = cv2.waitKey(1) & 0xFF
