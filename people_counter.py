@@ -7,8 +7,8 @@ class PeopleCounter:
         self.entry_count = 0
         self.exit_count = 0
         self.current_inside = 0
-        # トラッカーの初期化（リストに変更）
-        self.trackers = []
+        # トラッカーの初期化（辞書に変更）
+        self.trackers = {}
         # エリアラインの設定
         self.line_position = 250  # 調整が必要
         self.direction_threshold = 5
@@ -102,54 +102,97 @@ class PeopleCounter:
         detections, frame = self.detect_people(frame)
 
         # トラッカーの更新
-        updated_trackers = []
+        updated_trackers = {}
         updated_objects = {}
-        for i, tracker in enumerate(self.trackers):
+
+        # 既存のトラッカーを更新し、現在の位置を取得
+        tracker_positions = {}
+        for object_id, tracker in self.trackers.items():
             ok, box = tracker.update(frame)
             if ok:
                 x, y, w, h = [int(v) for v in box]
-                center_y = y + h // 2
-                object_id = list(self.objects.keys())[i]
+                center = (x + w // 2, y + h // 2)
+                tracker_positions[object_id] = (center, (x, y, w, h))
+                # オブジェクトの中心位置を更新
+                updated_objects[object_id] = center[1]
+            else:
+                # 追跡失敗したトラッカーは削除
+                if self.debug_mode:
+                    print(f"Tracker {object_id} failed and was removed.")
+
+        # 新しい検出と既存のトラッカーをマッチング
+        unmatched_detections = []
+        matched_trackers = set()
+        detection_centers = []
+
+        for detection in detections:
+            x, y, w, h = detection
+            center = (x + w // 2, y + h // 2)
+            detection_centers.append((center, detection))
+
+        distance_threshold = 50  # 距離のしきい値（調整が必要）
+
+        for det_center, detection in detection_centers:
+            min_distance = float('inf')
+            matched_id = None
+
+            for object_id, (trk_center, trk_box) in tracker_positions.items():
+                distance = np.linalg.norm(np.array(det_center) - np.array(trk_center))
+                if distance < min_distance and distance < distance_threshold:
+                    min_distance = distance
+                    matched_id = object_id
+
+            if matched_id is not None:
+                # 既存のトラッカーとマッチング
+                tracker = self.trackers[matched_id]
+                tracker.init(frame, detection)
+                updated_trackers[matched_id] = tracker
+                updated_objects[matched_id] = det_center[1]
+                matched_trackers.add(matched_id)
+            else:
+                # マッチングしなかった検出は新規トラッカーを作成
+                self.object_id += 1
+                tracker = cv2.legacy.TrackerKCF_create()
+                tracker.init(frame, detection)
+                updated_trackers[self.object_id] = tracker
+                updated_objects[self.object_id] = det_center[1]
+
+        # 追跡中で、マッチングされなかったトラッカーをそのまま更新リストに追加
+        for object_id in self.trackers.keys():
+            if object_id not in matched_trackers and object_id in tracker_positions:
+                updated_trackers[object_id] = self.trackers[object_id]
+                updated_objects[object_id] = tracker_positions[object_id][0][1]
+
+        # カウントの更新
+        for object_id in updated_trackers.keys():
+            if object_id in self.objects:
                 prev_center_y = self.objects[object_id]
+                curr_center_y = updated_objects[object_id]
 
                 # 入退室の判定
-                if prev_center_y < self.line_position and center_y >= self.line_position:
+                if prev_center_y < self.line_position and curr_center_y >= self.line_position:
                     self.entry_count += 1
                     self.current_inside += 1
-                elif prev_center_y > self.line_position and center_y <= self.line_position:
+                elif prev_center_y > self.line_position and curr_center_y <= self.line_position:
                     self.exit_count += 1
                     self.current_inside = max(0, self.current_inside - 1)
 
-                # オブジェクトの中心位置を更新
-                updated_objects[object_id] = center_y
-                updated_trackers.append(tracker)
-
-                if self.debug_mode:
-                    # バウンディングボックスとIDの表示
-                    cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
-                    cv2.putText(frame, f'ID: {object_id}', (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
-                    # 中心点の描画
-                    cv2.circle(frame, (x + w // 2, center_y), 5, (0, 255, 255), -1)
-            else:
-                # 追跡失敗したトラッカーを削除
-                object_id = list(self.objects.keys())[i]
-                if object_id in self.objects:
-                    del self.objects[object_id]
-
-        # 新しい検出をトラッカーに追加
-        for detection in detections:
-            x, y, w, h = detection
-            self.object_id += 1
-            center_y = y + h // 2
-            updated_objects[self.object_id] = center_y
-            tracker = cv2.legacy.TrackerKCF_create()
-            tracker.init(frame, (x, y, w, h))
-            updated_trackers.append(tracker)
-
+        # トラッカーとオブジェクト情報を更新
         self.trackers = updated_trackers
         self.objects = updated_objects
 
         if self.debug_mode:
+            # デバッグ情報の表示
+            for object_id, tracker in self.trackers.items():
+                # トラッカーの位置を取得
+                x, y, w, h = [int(v) for v in tracker_positions.get(object_id, ((0, 0), (0, 0, 0, 0)))[1]]
+                # バウンディングボックスとIDの表示
+                cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
+                cv2.putText(frame, f'ID: {object_id}', (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+                # 中心点の描画
+                center = (x + w // 2, y + h // 2)
+                cv2.circle(frame, center, 5, (0, 255, 255), -1)
+
             # エリアラインの描画
             cv2.line(frame, (0, self.line_position), (frame.shape[1], self.line_position), (0, 255, 255), 2)
 
