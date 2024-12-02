@@ -1,4 +1,5 @@
 import gspread
+from datetime import datetime
 from google.oauth2.service_account import Credentials
 
 class SpreadsheetManager:
@@ -17,6 +18,14 @@ class SpreadsheetManager:
             self.worksheet = self.spreadsheet.worksheet(sheet_name)
         else:
             self.worksheet = self.spreadsheet.sheet1
+
+    def append_row_with_timestamp(self, row_data):
+        # 現在のタイムスタンプを取得
+        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        # タイムスタンプをデータの先頭に追加
+        row_with_timestamp = [timestamp] + row_data
+        # データを1行追加
+        self.worksheet.append_row(row_with_timestamp)
 
     def append_row(self, row_data):
         # データを1行追加
