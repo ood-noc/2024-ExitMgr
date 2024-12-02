@@ -10,7 +10,7 @@ def main():
     args = parser.parse_args()
 
     # カメラの設定（デバイスIDを適宜変更）
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture(1)
 
     # フレームサイズの設定（処理速度向上のため）
     frame_width = 640
