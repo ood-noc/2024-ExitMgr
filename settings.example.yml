@@ -1,0 +1,4 @@
+service_account_file: '鍵のパス'
+spreadsheet_url: 'https://docs.google.com/spreadsheets/d/スプレッドシートのID/edit'
+sheet_name: 'シート1'
+device_id: 1

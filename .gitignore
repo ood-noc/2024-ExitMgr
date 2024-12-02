@@ -1,4 +1,6 @@
 # Python virtual environment
 venv/
 yolo/yolov4.weights
+secrets/*
+settings.yml
 
