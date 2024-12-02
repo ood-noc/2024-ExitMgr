@@ -1,3 +1,5 @@
+# main.py
+
 import cv2
 from people_counter import PeopleCounter
 import time
@@ -5,7 +7,7 @@ import argparse
 
 def main():
     # コマンドライン引数の処理
-    parser = argparse.ArgumentParser(description="People Counting System")
+    parser = argparse.ArgumentParser(description="People Counting System with Centroid Tracking")
     parser.add_argument('--debug', '-d', action='store_true', help='デバッグモード（映像を表示）')
     args = parser.parse_args()
 

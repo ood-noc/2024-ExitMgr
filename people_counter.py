@@ -1,6 +1,9 @@
+# people_counter.py
+
 import cv2
 import numpy as np
 from collections import deque
+from centroid_tracker import CentroidTracker
 
 class PeopleCounter:
     def __init__(self, debug_mode=False, max_distance=50, max_frames=5):
@@ -9,7 +12,7 @@ class PeopleCounter:
         self.exit_count = 0
         self.current_inside = 0
 
-        # エリアラインの設定（縦線）
+        # エリアラインの設定（縦線の位置）
         self.line_position = 320  # フレーム幅に合わせて調整
 
         # デバッグモードフラグ
@@ -18,16 +21,14 @@ class PeopleCounter:
         # YOLOの初期化（Tiny-YOLOv4を使用）
         self.net, self.output_layers, self.classes = self.initialize_yolo()
 
-        # オブジェクトの追跡用データ構造
-        self.tracked_objects = {}
-        self.next_object_id = 0
+        # CentroidTrackerの初期化
+        self.ct = CentroidTracker(max_distance=max_distance, max_frames=max_frames)
 
-        # セントロイドの移動履歴を保持
-        self.max_distance = max_distance  # セントロイド間の最大距離
-        self.max_frames = max_frames      # 同一人物と判断するための最大フレーム数
+        # オブジェクトの移動履歴を保持
+        self.trackable_objects = {}
 
     def initialize_yolo(self):
-        # モデルとクラス名のパス（Tinyモデルを使用）
+        # モデルとクラス名のパス（Tiny-YOLOv4を使用）
         model_cfg = 'yolo/yolov4-tiny.cfg'
         model_weights = 'yolo/yolov4-tiny.weights'
         classes_file = 'yolo/coco.names'
@@ -82,7 +83,7 @@ class PeopleCounter:
                     confidences.append(float(confidence))
                     class_ids.append(class_id)
 
-        # 重複するボックスの除去
+        # 重複するボックスの除去（Non-Maximum Suppression）
         indexes = cv2.dnn.NMSBoxes(boxes, confidences, 0.3, 0.4)
 
         detections = []
@@ -114,66 +115,49 @@ class PeopleCounter:
         # YOLOで人物検出
         detections, frame = self.detect_people(frame)
 
-        current_centroids = [self.compute_centroid(det) for det in detections]
-        updated_tracked_objects = {}
+        # セントロイドの計算
+        input_centroids = [self.compute_centroid(det) for det in detections]
 
-        # 更新されたオブジェクトの移動履歴を保持
-        for centroid in current_centroids:
-            matched = False
-            for object_id, data in self.tracked_objects.items():
-                last_centroid = data['centroids'][-1]
-                distance = np.linalg.norm(np.array(centroid) - np.array(last_centroid))
-                if distance < self.max_distance:
-                    # 同一人物と判断
-                    updated_tracked_objects[object_id] = {
-                        'centroids': data['centroids'] + [centroid],
-                        'frames_since_update': 0
-                    }
-                    matched = True
+        # CentroidTrackerを使用してオブジェクトの更新
+        objects = self.ct.update(input_centroids)
 
-                    # カウントの更新
-                    if len(updated_tracked_objects[object_id]['centroids']) >= 2:
-                        prev_x = updated_tracked_objects[object_id]['centroids'][-2][0]
-                        curr_x = updated_tracked_objects[object_id]['centroids'][-1][0]
+        # オブジェクトのトラッキングとカウント
+        for (object_id, centroid) in objects.items():
+            # トラックされたオブジェクトがまだ trackable_objects にない場合登録
+            to = self.trackable_objects.get(object_id, None)
 
-                        if prev_x < self.line_position and curr_x >= self.line_position:
-                            self.entry_count += 1
-                            self.current_inside += 1
-                        elif prev_x > self.line_position and curr_x <= self.line_position:
-                            self.exit_count += 1
-                            self.current_inside = max(0, self.current_inside - 1)
+            if to is None:
+                to = deque(maxlen=2)
+                to.append(centroid)
+                self.trackable_objects[object_id] = to
+            else:
+                to.append(centroid)
 
-                    break
+                # セントロイドの履歴が2つある場合のみカウント判定
+                if len(to) == 2:
+                    prev_x = to[0][0]
+                    curr_x = to[1][0]
 
-            if not matched:
-                # 新しいオブジェクトとして登録
-                updated_tracked_objects[self.next_object_id] = {
-                    'centroids': [centroid],
-                    'frames_since_update': 0
-                }
-                self.next_object_id += 1
+                    if prev_x < self.line_position and curr_x >= self.line_position:
+                        self.entry_count += 1
+                        self.current_inside += 1
+                        # 一度カウントした後のセントロイド履歴をクリア
+                        self.trackable_objects[object_id] = deque(maxlen=2)
+                        self.trackable_objects[object_id].append(centroid)
+                    elif prev_x > self.line_position and curr_x <= self.line_position:
+                        self.exit_count += 1
+                        self.current_inside = max(0, self.current_inside - 1)
+                        # 一度カウントした後のセントロイド履歴をクリア
+                        self.trackable_objects[object_id] = deque(maxlen=2)
+                        self.trackable_objects[object_id].append(centroid)
 
-        # オブジェクトが検出されなかった場合の処理
-        for object_id, data in self.tracked_objects.items():
-            if object_id not in updated_tracked_objects:
-                data['frames_since_update'] += 1
-                if data['frames_since_update'] < self.max_frames:
-                    updated_tracked_objects[object_id] = data
-                else:
-                    # 一定フレーム数更新されない場合は削除
-                    pass
-
-        self.tracked_objects = updated_tracked_objects
-
-        if self.debug_mode:
-            # デバッグ情報の表示
-            for object_id, data in self.tracked_objects.items():
-                centroid = data['centroids'][-1]
-                # セントロイドの描画
+            if self.debug_mode:
+                # セントロイドの描画（赤色）
                 cv2.circle(frame, centroid, 5, (0, 0, 255), -1)
                 cv2.putText(frame, f'ID: {object_id}', (centroid[0] - 10, centroid[1] - 10),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
 
+        if self.debug_mode:
             # エリアラインの描画（縦線）
             cv2.line(frame, (self.line_position, 0), (self.line_position, frame.shape[0]), (255, 0, 255), 2)
 
