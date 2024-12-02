@@ -21,6 +21,7 @@ def main():
     service_account_file = config['service_account_file']
     spreadsheet_url = config['spreadsheet_url']
     sheet_name = config.get('sheet_name')  # sheet_nameはオプション
+    device_id = config['device_id']
 
     # カメラの設定（デバイスIDを適宜変更）
     cap = cv2.VideoCapture(0)
@@ -77,9 +78,6 @@ def main():
         entry_count = pc.entry_count
         exit_count = pc.exit_count
         current_inside = pc.current_inside
-        
-        # TODO: 後で書き換える
-        device_id = 1
 
         # 10秒ごとに標準出力に表示
         elapsed_time = time.time() - start_time
