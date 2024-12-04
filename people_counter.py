@@ -146,7 +146,7 @@ class PeopleCounter:
                         self.trackable_objects[object_id].append(centroid)
                     elif prev_x > self.line_position and curr_x <= self.line_position:
                         self.exit_count += 1
-                        self.current_inside = max(0, self.current_inside - 1)
+                        self.current_inside -= 1  # マイナスを許容
                         # 一度カウントした後のセントロイド履歴をクリア
                         self.trackable_objects[object_id] = deque(maxlen=2)
                         self.trackable_objects[object_id].append(centroid)
