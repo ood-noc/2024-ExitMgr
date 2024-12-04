@@ -27,8 +27,8 @@ def main():
     cap = cv2.VideoCapture(1)
 
     # フレームサイズの設定（処理速度向上のため）
-    frame_width = 640
-    frame_height = 480
+    frame_width = 320
+    frame_height = 240
 
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, frame_width)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, frame_height)

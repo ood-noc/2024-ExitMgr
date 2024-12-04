@@ -138,18 +138,18 @@ class PeopleCounter:
                     prev_x = to[0][0]
                     curr_x = to[1][0]
 
-                    if prev_x < self.line_position and curr_x >= self.line_position:
-                        self.entry_count += 1
-                        self.current_inside += 1
-                        # 一度カウントした後のセントロイド履歴をクリア
-                        self.trackable_objects[object_id] = deque(maxlen=2)
-                        self.trackable_objects[object_id].append(centroid)
-                    elif prev_x > self.line_position and curr_x <= self.line_position:
-                        self.exit_count += 1
-                        self.current_inside -= 1  # マイナスを許容
-                        # 一度カウントした後のセントロイド履歴をクリア
-                        self.trackable_objects[object_id] = deque(maxlen=2)
-                        self.trackable_objects[object_id].append(centroid)
+                        if prev_x > self.line_position and curr_x <= self.line_position:
+                            self.entry_count += 1
+                            self.current_inside += 1
+                            # 一度カウントした後のセントロイド履歴をクリア
+                            self.trackable_objects[object_id] = deque(maxlen=2)
+                            self.trackable_objects[object_id].append(centroid)
+                        elif prev_x < self.line_position and curr_x >= self.line_position:
+                            self.exit_count += 1
+                            self.current_inside -= 1
+                            # 一度カウントした後のセントロイド履歴をクリア
+                            self.trackable_objects[object_id] = deque(maxlen=2)
+                            self.trackable_objects[object_id].append(centroid)
 
             if self.debug_mode:
                 # セントロイドの描画（赤色）
