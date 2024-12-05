@@ -5,6 +5,7 @@ import numpy as np
 from collections import deque
 from centroid_tracker import CentroidTracker
 
+
 class PeopleCounter:
     def __init__(self, debug_mode=False, max_distance=50, max_frames=5):
         # カウントの初期化
@@ -29,12 +30,12 @@ class PeopleCounter:
 
     def initialize_yolo(self):
         # モデルとクラス名のパス（Tiny-YOLOv4を使用）
-        model_cfg = 'yolo/yolov4-tiny.cfg'
-        model_weights = 'yolo/yolov4-tiny.weights'
-        classes_file = 'yolo/coco.names'
+        model_cfg = "yolo/yolov4-tiny.cfg"
+        model_weights = "yolo/yolov4-tiny.weights"
+        classes_file = "yolo/coco.names"
 
         # クラス名の読み込み
-        with open(classes_file, 'r') as f:
+        with open(classes_file, "r") as f:
             classes = [line.strip() for line in f.readlines()]
 
         # ネットワークの読み込み
@@ -53,7 +54,9 @@ class PeopleCounter:
         height, width, _ = frame.shape
 
         # 入力画像の作成
-        blob = cv2.dnn.blobFromImage(frame, 1/255.0, (416, 416), swapRB=True, crop=False)
+        blob = cv2.dnn.blobFromImage(
+            frame, 1 / 255.0, (416, 416), swapRB=True, crop=False
+        )
         self.net.setInput(blob)
 
         # 推論の実行
@@ -70,7 +73,7 @@ class PeopleCounter:
                 class_id = np.argmax(scores)
                 confidence = scores[class_id]
                 # クラスIDが「person」であり、信頼度がしきい値を超える場合
-                if self.classes[class_id] == 'person' and confidence > 0.3:
+                if self.classes[class_id] == "person" and confidence > 0.3:
                     center_x = int(detection[0] * width)
                     center_y = int(detection[1] * height)
                     w = int(detection[2] * width)
@@ -97,8 +100,15 @@ class PeopleCounter:
                     # バウンディングボックスの描画（緑色）
                     label = f"{self.classes[class_ids[i]]}: {confidences[i]:.2f}"
                     cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-                    cv2.putText(frame, label, (x, y - 10),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                    cv2.putText(
+                        frame,
+                        label,
+                        (x, y - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        (0, 255, 0),
+                        2,
+                    )
         else:
             # 検出がない場合の処理
             pass
@@ -122,7 +132,7 @@ class PeopleCounter:
         objects = self.ct.update(input_centroids)
 
         # オブジェクトのトラッキングとカウント
-        for (object_id, centroid) in objects.items():
+        for object_id, centroid in objects.items():
             # トラックされたオブジェクトがまだ trackable_objects にない場合登録
             to = self.trackable_objects.get(object_id, None)
 
@@ -138,35 +148,69 @@ class PeopleCounter:
                     prev_x = to[0][0]
                     curr_x = to[1][0]
 
-                        if prev_x > self.line_position and curr_x <= self.line_position:
-                            self.entry_count += 1
-                            self.current_inside += 1
-                            # 一度カウントした後のセントロイド履歴をクリア
-                            self.trackable_objects[object_id] = deque(maxlen=2)
-                            self.trackable_objects[object_id].append(centroid)
-                        elif prev_x < self.line_position and curr_x >= self.line_position:
-                            self.exit_count += 1
-                            self.current_inside -= 1
-                            # 一度カウントした後のセントロイド履歴をクリア
-                            self.trackable_objects[object_id] = deque(maxlen=2)
-                            self.trackable_objects[object_id].append(centroid)
+                if prev_x > self.line_position and curr_x <= self.line_position:
+                    self.entry_count += 1
+                    self.current_inside += 1
+                    # 一度カウントした後のセントロイド履歴をクリア
+                    self.trackable_objects[object_id] = deque(maxlen=2)
+                    self.trackable_objects[object_id].append(centroid)
+                elif prev_x < self.line_position and curr_x >= self.line_position:
+                    self.exit_count += 1
+                    self.current_inside -= 1
+                    # 一度カウントした後のセントロイド履歴をクリア
+                    self.trackable_objects[object_id] = deque(maxlen=2)
+                    self.trackable_objects[object_id].append(centroid)
 
             if self.debug_mode:
                 # セントロイドの描画（赤色）
                 cv2.circle(frame, centroid, 5, (0, 0, 255), -1)
-                cv2.putText(frame, f'ID: {object_id}', (centroid[0] - 10, centroid[1] - 10),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+                cv2.putText(
+                    frame,
+                    f"ID: {object_id}",
+                    (centroid[0] - 10, centroid[1] - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (0, 0, 255),
+                    2,
+                )
 
         if self.debug_mode:
             # エリアラインの描画（縦線）
-            cv2.line(frame, (self.line_position, 0), (self.line_position, frame.shape[0]), (255, 0, 255), 2)
+            cv2.line(
+                frame,
+                (self.line_position, 0),
+                (self.line_position, frame.shape[0]),
+                (255, 0, 255),
+                2,
+            )
 
             # カウント情報の表示
-            cv2.putText(frame, f"Entry: {self.entry_count}", (10, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-            cv2.putText(frame, f"Exit: {self.exit_count}", (10, 60),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-            cv2.putText(frame, f"Inside: {self.current_inside}", (10, 90),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+            cv2.putText(
+                frame,
+                f"Entry: {self.entry_count}",
+                (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (0, 255, 0),
+                2,
+            )
+            cv2.putText(
+                frame,
+                f"Exit: {self.exit_count}",
+                (10, 60),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (0, 0, 255),
+                2,
+            )
+            cv2.putText(
+                frame,
+                f"Inside: {self.current_inside}",
+                (10, 90),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (255, 0, 0),
+                2,
+            )
 
         return frame
